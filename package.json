@@ -1,0 +1,31 @@
+{
+  "name": "dao_mariadb",
+  "version": "1.0.0",
+  "description": "Exemple Data Access Object en javascript",
+  "main": "index.js",
+  "type": "module",
+  "imports": {
+    "#dao/*": "./src/dataAccessObject/*",
+    "#config/*": "./src/config/*",
+    "#tests/*": "./src/tests/*"
+  },
+  "scripts": {
+    "start": "node --env-file=.env ./index.js",
+    "test" : "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "keywords": [
+    "dao",
+    "mariadb",
+    "api"
+  ],
+  "author": "Alexis",
+  "license": "ISC",
+  "dependencies": {
+    "mariadb": "^3.4.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.0.14",
+    "jest": "^30.0.4"
+  }
+}
