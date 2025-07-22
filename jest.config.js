@@ -10,7 +10,16 @@ export default {
             functions: 90,
             lines: 90,
             statements: 90
+        },
+        'ts-jest': {
+            useESM: true
         }
+    },
+    moduleNameMapper: {
+        '^(\\.{1,2}/.*)\\.js$': '$1',
+        '^#dao/(.*)$': '<rootDir>/src/dataAccessObject/$1',
+        '^#config/(.*)$': '<rootDir>/src/config/$1',
+        '^#tests/(.*)$': '<rootDir>/src/tests/$1'
     },
     testMatch: [
         "**/__tests__/**/*.js",
