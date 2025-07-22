@@ -20,14 +20,9 @@ export const mockPool = {
     end: jest.fn()
 };
 
-// Mock du module mariadb complet
-export const mariadbMock = {
-    createPool: jest.fn().mockReturnValue(mockPool),
-    createConnection: jest.fn().mockResolvedValue(mockConnection)
-};
-
 // Helper pour réinitialiser tous les mocks
 export const resetMariadbMocks = () => {
+    // Reset des méthodes de connexion
     mockConnection.query.mockReset();
     mockConnection.execute.mockReset();
     mockConnection.beginTransaction.mockReset();
@@ -36,13 +31,11 @@ export const resetMariadbMocks = () => {
     mockConnection.end.mockReset();
     mockConnection.release.mockReset();
     
+    // Reset des méthodes de pool et reconfiguration
     mockPool.getConnection.mockReset().mockResolvedValue(mockConnection);
     mockPool.query.mockReset();
     mockPool.execute.mockReset();
     mockPool.end.mockReset();
-    
-    mariadbMock.createPool.mockReset().mockReturnValue(mockPool);
-    mariadbMock.createConnection.mockReset().mockResolvedValue(mockConnection);
 };
 
 // Mock des réponses typiques de la base de données
@@ -66,6 +59,3 @@ export const mockResponses = {
         warningStatus: 0
     }
 };
-
-// Configuration du mock pour Jest
-jest.mock('mariadb', () => mariadbMock);
