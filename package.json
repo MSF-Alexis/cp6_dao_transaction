@@ -6,6 +6,7 @@
   "type": "module",
   "imports": {
     "#dao/*": "./src/dataAccessObject/*",
+    "#database/*": "./src/database/*",
     "#config/*": "./src/config/*",
     "#tests/*": "./src/tests/*"
   },
