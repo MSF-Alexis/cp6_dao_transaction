@@ -46,13 +46,17 @@ class ProductDAO {
      * @throws {Error} - Erreur de validation ou base de données
      */
     async create(product) {
-        this.validateProduct(product);
-        return await this.dbClient.transaction(async (clientConnection) => {
-            return await clientConnection.query(
-                'INSERT INTO products (name, description, price, stock) VALUES (?, ?, ?, ?)',
-                [product.name, product.description, product.price, product.stock]
-            );
-        });
+        try {
+            this.validateProduct(product);
+            return await this.dbClient.transaction(async (clientConnection) => {
+                return await clientConnection.query(
+                    'INSERT INTO products (name, description, price, stock) VALUES (?, ?, ?, ?)',
+                    [product.name, product.description, product.price, product.stock]
+                );
+            });            
+        } catch (error) {
+            throw error;
+        }
     }
 
     /**
@@ -62,13 +66,17 @@ class ProductDAO {
      * @returns {Promise<Array>} - Liste des produits
      */
     async findAll(limit = 50, offset = 0) {
-        return await this.dbClient.query(
-            `SELECT id, name, description, price, stock, created_at, updated_at 
-                 FROM products 
-                 ORDER BY created_at DESC 
-                 LIMIT ? OFFSET ?`,
-            [limit, offset]
-        );
+        try {
+            return await this.dbClient.query(
+                `SELECT id, name, description, price, stock, created_at, updated_at 
+                     FROM products 
+                     ORDER BY created_at DESC 
+                     LIMIT ? OFFSET ?`,
+                [limit, offset]
+            );
+        } catch (error) {
+            throw error;
+        }
     }
 
     /**

@@ -149,4 +149,32 @@ describe('[Product - DAO]', function () {
             });
         });
     });
+
+    describe('create', function () {
+
+        test('Crée un produit avec succès', async function () {
+            // Arrange
+            const product = validProduct;
+
+            // Act
+            const result = await productDAO.create(product);
+
+            // Assert
+            expect(result.insertId).toBe(1);
+        });
+        
+        test("DB error simulated", async () => {
+            dbClient.failNext(); // La prochaine query lèvera une erreur simulée
+    
+            // Act & Assert
+            await expect(productDAO.create(validProduct)).rejects.toThrow("DB error simulated");
+    
+    
+            // Vérification supplémentaire (si transaction mockée avec historique)
+            // Ici tu pourrais vérifier que la transaction s'est bien déroulée côté mock,
+            // par exemple en contrôlant un 'rollbackCalled' ou l'absence de commit.
+            // (Selon l’implémentation de ton DBClient/mock)
+        });
+    });
+
 });
