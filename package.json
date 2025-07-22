@@ -5,14 +5,11 @@
   "main": "index.js",
   "type": "module",
   "imports": {
-    "#dao/*": "./src/dataAccessObject/*",
-    "#database/*": "./src/database/*",
-    "#config/*": "./src/config/*",
-    "#tests/*": "./src/tests/*"
+    "#src/*" : "./src/*"
   },
   "scripts": {
     "start": "node --env-file=.env ./index.js",
-    "test" : "node --experimental-vm-modules --trace-warnings node_modules/jest/bin/jest.js --detectOpenHandles "
+    "test" : "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles "
   },
   "keywords": [
     "dao",

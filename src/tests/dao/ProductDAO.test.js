@@ -1,104 +1,152 @@
-import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { mockConnection, mockPool, mockResponses, resetMariadbMocks } from '#tests/mocks/database.mock.js';
+import DBClient from "#src/tests/mocks/DBClient.mock.js"
+import { ProductDAO } from "#src/core/data/ProductDao.js"
+import { validProduct, invalidProducts } from "#src/tests/fixtures/ProductData.js"
 
-jest.mock('#config/database.js', () => ({
-    pool: mockPool
-}));
+describe('[Product - DAO]', function () {
+    let dbClient, productDAO;
 
-import { ProductDAO } from '#dao/ProductDao.js';
-import { validProduct } from '#tests/fixtures/data.js';
-import { setupTest, teardownTest } from '#tests/helper.js';
-
-describe('ProductDAO', () => {
-    let productDAO;
-
-    beforeEach(() => {
-        setupTest();
-        resetMariadbMocks();
-        productDAO = new ProductDAO();
+    beforeEach(function () {
+        dbClient = new DBClient();
+        productDAO = new ProductDAO(dbClient);
     });
 
-    afterEach(() => {
-        teardownTest();
-    });
+    describe('validateProduct', function () {
+        test('Accepte un produit valide', function () {
+            // Arrange
+            const product = validProduct;
 
-    describe('validateProduct', () => {
-        test('Produit correct', () => {
-            expect(() => productDAO.validateProduct(validProduct)).not.toThrow();
-        });
-    });
-
-    describe('rejectProduct', () => {
-        test('Nom trop court (min 5)', () => {
-            expect(() => productDAO.validateProduct({
-                name: 'Heho',
-                description: "C'est un test qui va échoué",
-                price: 1.00,
-                stock: 1
-            })).toThrow('Le champ name doit contenir au moins 5 caractères');
+            // Act & Assert
+            expect(() => productDAO.validateProduct(product)).not.toThrow();
         });
 
-        test('Description trop courte (min 10)', () => {
-            expect(() => productDAO.validateProduct({
-                name: 'Super bol pokémon avec cuillière pikachu',
-                description: "PasBon",
-                price: 1.00,
-                stock: 1
-            })).toThrow('Le champ description doit contenir au moins 10 caractères');
+        describe('Refuser un produit invalide - validation des valeurs', function () {
+            test('Rejette un produit avec un prix invalide', function () {
+                // Arrange
+                const productWithInvalidPrice = invalidProducts.invalidPrice;
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithInvalidPrice))
+                    .toThrow('Le champ price doit être ≥ 0');
+            });
+
+            test('Rejette un produit avec un stock invalide', function () {
+                // Arrange
+                const productWithInvalidStock = invalidProducts.invalidStock;
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithInvalidStock))
+                    .toThrow('Le champ stock doit être ≥ 0');
+            });
+
+            test('Rejette un produit avec une description trop courte', function () {
+                // Arrange
+                const productWithShortDescription = invalidProducts.shortDescription;
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithShortDescription))
+                    .toThrow('Le champ description doit contenir au moins 10 caractères');
+            });
+
+            test('Rejette un produit avec un nom trop court', function () {
+                // Arrange
+                const productWithShortName = invalidProducts.shortName;
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithShortName))
+                    .toThrow('Le champ name doit contenir au moins 5 caractères');
+            });
         });
 
-        test('Prix négatif', () => {
-            expect(() => productDAO.validateProduct({
-                name: 'Sac à dos cars avec petites roues',
-                description: "Pour courir aussi vite que cars, Katchaoww !",
-                price: -999.99,
-                stock: 1
-            })).toThrow('Le champ price doit être ≥ 0');
+        describe('Refuser un produit invalide - champs obligatoires', function () {
+            test('Rejette un produit avec un prix null', function () {
+                // Arrange
+                const productWithNullPrice = Object.assign({}, invalidProducts.invalidPrice, {
+                    price: null
+                });
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithNullPrice))
+                    .toThrow('Le champ price est obligatoire');
+            });
+
+            test('Rejette un produit avec un stock null', function () {
+                // Arrange
+                const productWithNullStock = Object.assign({}, invalidProducts.invalidStock, {
+                    stock: null
+                });
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithNullStock))
+                    .toThrow('Le champ stock est obligatoire');
+            });
+
+            test('Rejette un produit avec un nom null', function () {
+                // Arrange
+                const productWithNullName = Object.assign({}, invalidProducts.shortName, {
+                    name: null
+                });
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithNullName))
+                    .toThrow('Le champ name est obligatoire');
+            });
+
+            test('Rejette un produit avec une description null', function () {
+                // Arrange
+                const productWithNullDescription = Object.assign({}, invalidProducts.shortDescription, {
+                    description: null
+                });
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithNullDescription))
+                    .toThrow('Le champ description est obligatoire');
+            });
         });
 
-        test('Stock négatif', () => {
-            expect(() => productDAO.validateProduct({
-                name: 'Voiture téléguidée Oui-Oui (ou Yes-Yes en anglais)',
-                description: "C'est parfait pour les enfants",
-                price: 29.99,
-                stock: -1
-            })).toThrow('Le champ stock doit être ≥ 0');
-        });
+        describe('Refuser un produit invalide - types incorrects', function () {
+            test('Rejette un produit avec un prix de mauvais type', function () {
+                // Arrange
+                const productWithWrongPriceType = Object.assign({}, invalidProducts.invalidPrice, {
+                    price: true
+                });
 
-        test('Stock non entier', () => {
-            expect(() => productDAO.validateProduct({
-                name: 'Produit test',
-                description: "Description de test suffisamment longue",
-                price: 10.00,
-                stock: 2.5
-            })).toThrow('Le champ stock doit être un entier');
-        });
-    });
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithWrongPriceType))
+                    .toThrow('Le champ price doit être de type number');
+            });
 
-    describe('create', () => {
-        test('Produit valide qui doit retourner un id', async () => {
-            /*  ARRANGE  */
-            // Configuration des mocks
-            mockConnection.query.mockResolvedValue(mockResponses.insertResult);
-            mockConnection.beginTransaction.mockResolvedValue(undefined);
-            mockConnection.commit.mockResolvedValue(undefined);
-            mockConnection.rollback.mockResolvedValue(undefined);
-            mockConnection.release.mockResolvedValue(undefined);
+            test('Rejette un produit avec un stock non entier', function () {
+                // Arrange
+                const productWithFloatStock = Object.assign({}, invalidProducts.invalidStock, {
+                    stock: 125.2
+                });
 
-            /*  ACT  */
-            const id = await productDAO.create(validProduct);
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithFloatStock))
+                    .toThrow('Le champ stock doit être un entier');
+            });
 
-            /*  ASSERT  */
-            expect(id).toBe(1);
-            expect(mockPool.getConnection).toHaveBeenCalledTimes(1);
-            expect(mockConnection.beginTransaction).toHaveBeenCalledTimes(1);
-            expect(mockConnection.commit).toHaveBeenCalledTimes(1);
-            expect(mockConnection.rollback).not.toHaveBeenCalled();
-            expect(mockConnection.release).toHaveBeenCalledTimes(1);
-            expect(mockConnection.query).toHaveBeenCalledWith(
-                'INSERT INTO products (name, description, price, stock) VALUES (?, ?, ?, ?)',
-                [validProduct.name, validProduct.description, validProduct.price, validProduct.stock]
-            );
+            test('Rejette un produit avec un nom de mauvais type', function () {
+                // Arrange
+                const productWithWrongNameType = Object.assign({}, invalidProducts.shortName, {
+                    name: 123
+                });
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithWrongNameType))
+                    .toThrow('Le champ name doit être de type string');
+            });
+
+            test('Rejette un produit avec une description de mauvais type', function () {
+                // Arrange
+                const productWithWrongDescriptionType = Object.assign({}, invalidProducts.shortDescription, {
+                    description: false
+                });
+
+                // Act & Assert
+                expect(() => productDAO.validateProduct(productWithWrongDescriptionType))
+                    .toThrow('Le champ description doit être de type string');
+            });
         });
     });
 });

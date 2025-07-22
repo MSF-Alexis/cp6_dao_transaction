@@ -27,5 +27,6 @@ export default {
         "**/*.spec.js"
     ],
     setupFilesAfterEnv: ["<rootDir>/src/tests/setup.js"],
+    testTimeout: 5000,
     transform: {},
 };
