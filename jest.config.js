@@ -17,8 +17,7 @@ export default {
     },
     moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
-        '^#dao/(.*)$': '<rootDir>/src/dataAccessObject/$1',
-        '^#config/(.*)$': '<rootDir>/src/config/$1',
+        '^#src/(.*)$': '<rootDir>/src/$1',
         '^#tests/(.*)$': '<rootDir>/src/tests/$1'
     },
     testMatch: [
