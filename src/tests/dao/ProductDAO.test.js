@@ -138,9 +138,52 @@ describe("[Product - DAO]", () => {
     /*  Les autres blocs (findAll, findById, etc.) sont encore À FAIRE    */
     /* ------------------------------------------------------------------ */
 
-    describe("findAll()", async function () {
-        test("Test 8 - Retourne tous les produits avec pagination par défaut", async function () {
-           
+    describe("findAll()", function () {
+        // Test 8 – Retourne tous les produits avec pagination par défaut
+        test('Test 8 – Retourne tous les produits avec pagination par défaut', async () => {
+            // 1. ARRANGE
+            // On "mock" la méthode query du dbClient pour simuler deux accès BDD :
+            // - Premier appel de query (pour le total) : la BDD "compte" 3 produits.
+            // - Second appel de query (pour les données paginées) : la BDD retourne le tableau mockProducts
+            dbClient.query = jest.fn()
+                .mockResolvedValueOnce([{ total: 3 }])    // Simule : SELECT COUNT(*) FROM products
+                .mockResolvedValueOnce(mockProducts);     // Simule : SELECT ... LIMIT ... OFFSET ...
+
+            // 2. ACT
+            // On exécute la méthode search(), sans critère, donc sur la page 1 (pagination par défaut)
+            const result = await productDAO.search();
+
+            // 3. ASSERTS
+            // Vérifie que le "résultat" contient bien :
+            // - le tableau mockProducts comme propriété products
+            // - le total d'éléments égal à 3
+            // - un bloc pagination complet avec valeurs par défaut (20 par page, page 1, 1 page au total, pas de page suivante)
+            expect(result).toEqual({
+                products: mockProducts,
+                total: 3,
+                pagination: { perPage: 20, page: 1, maxPage: 1, hasNext: false }
+            });
+
+            // Vérifie que la méthode query a été appelée exactement 2 fois (1 pour COUNT, 1 pour SELECT)
+            expect(dbClient.query).toHaveBeenCalledTimes(2);
+
+            // Vérifie le SQL du premier appel (dénombrement total)
+            expect(dbClient.query.mock.calls[0][0]).toContain('COUNT(*)');
+
+            // Vérifie les bons paramètres SQL du second appel (limit et offset par défaut)
+            expect(dbClient.query.mock.calls[1][1]).toEqual([20, 0]);
+        });
+
+        test('Test 9 - Retourne un tableau vide si aucun produit', async () => {
+            dbClient.query = jest.fn()
+                .mockResolvedValueOnce([{ total: 0 }]);
+            const result = await productDAO.findAll();
+            expect(result).toEqual({
+                products: [],
+                pagination: {
+                    perPage: 50, page: 1, maxPage: 0, total: 0
+                }
+            })
         });
     });
 

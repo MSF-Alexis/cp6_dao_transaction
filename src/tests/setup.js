@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-
+global.jest = jest;
 // Configuration globale pour les tests
 // global.console = {
     // ...console,

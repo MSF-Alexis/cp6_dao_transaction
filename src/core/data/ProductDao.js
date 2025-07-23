@@ -53,32 +53,65 @@ class ProductDAO {
                     'INSERT INTO products (name, description, price, stock) VALUES (?, ?, ?, ?)',
                     [product.name, product.description, product.price, product.stock]
                 );
-            });            
+            });
         } catch (error) {
             throw error;
         }
     }
 
     /**
-     * Récupère tous les produits avec pagination optionnelle
-     * @param {number} limit - Nombre de produits par page (défaut: 50)
-     * @param {number} offset - Décalage pour la pagination (défaut: 0)
-     * @returns {Promise<Array>} - Liste des produits
+     * Récupère les produits paginés + métadonnées de pagination
+     * @param {number} limit  - Éléments par page (défaut : 50, min : 1, max : 200)
+     * @param {number} page   - Page courante (défaut : 1, min : 1)
+     * @returns {Promise<{products: Array, pagination: {perPage:number, page:number, maxPage:number, total:number}}>}
      */
-    async findAll(limit = 50, offset = 0) {
-        try {
-            return await this.dbClient.query(
-                `SELECT id, name, description, price, stock, created_at, updated_at 
-                     FROM products 
-                     ORDER BY created_at DESC 
-                     LIMIT ? OFFSET ?`,
-                [limit, offset]
-            );
-        } catch (error) {
-            throw error;
+    async findAll(limit = 50, page = 1) {
+        // ------------ Validation des paramètres ------------
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+            throw new Error('Le paramètre limit doit être un entier compris entre 1 et 200');
         }
-    }
+        if (!Number.isInteger(page) || page < 1) {
+            throw new Error('Le paramètre page doit être un entier positif');
+        }
 
+        // ------------ Calcul de l’offset ------------
+        const offset = (page - 1) * limit;
+
+        // ------------ Total d’enregistrements ------------
+        const [{ total }] = await this.dbClient.query(
+            'SELECT COUNT(*) AS total FROM products'
+        );
+
+        // Dès qu’il n’y a rien : réponse immédiate
+        if (total === 0) {
+            return {
+                products: [],
+                pagination: { perPage: limit, page, maxPage: 0, total: 0 }
+            };
+        }
+
+        // ------------ Récupération de la page demandée ------------
+        const products = await this.dbClient.query(
+            `SELECT id, name, description, price, stock, created_at, updated_at
+       FROM products
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?`,
+            [limit, offset]
+        );
+
+        // ------------ Construction de la réponse ------------
+        const maxPage = Math.ceil(total / limit);
+
+        return {
+            products,
+            pagination: {
+                perPage: limit,
+                page,
+                maxPage,
+                total
+            }
+        };
+    }
     /**
      * Récupère un produit par son ID
      * @param {number} id - ID du produit
@@ -219,65 +252,78 @@ class ProductDAO {
     }
 
     /**
-     * Recherche de produits avec filtres
-     * @param {Object} filters - Filtres de recherche {name, minPrice, maxPrice, inStock}
-     * @param {number} limit - Limite de résultats
-     * @param {number} offset - Décalage pour la pagination
-     * @returns {Promise<{products: Array, total: number}>} - Résultats paginés
-     */
-    async search(filters = {}, limit = 20, offset = 0) {
-        let whereConditions = [];
-        let params = [];
+  * Recherche de produits avec filtres + pagination détaillée
+  *
+  * @param {Object}  filters        - { name, minPrice, maxPrice, inStock }
+  * @param {number}  limit          - Éléments par page (def. 20, min 1, max 200)
+  * @param {number}  page           - Numéro de page (def. 1, min 1)
+  * @returns {Promise<{products:Array, total:number, pagination:Object}>}
+  */
+    async search(filters = {}, limit = 20, page = 1) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+            throw new Error("Le paramètre limit doit être un entier entre 1 et 200");
+        }
+        if (!Number.isInteger(page) || page < 1) {
+            throw new Error("Le paramètre page doit être un entier positif");
+        }
 
-        // Construction dynamique des filtres
+        const where = [];
+        const params = [];
+
         if (filters.name) {
-            whereConditions.push('name LIKE ?');
+            where.push("name LIKE ?");
             params.push(`%${filters.name}%`);
         }
-
         if (filters.minPrice !== undefined) {
-            whereConditions.push('price >= ?');
+            where.push("price >= ?");
             params.push(filters.minPrice);
         }
-
         if (filters.maxPrice !== undefined) {
-            whereConditions.push('price <= ?');
+            where.push("price <= ?");
             params.push(filters.maxPrice);
         }
-
         if (filters.inStock === true) {
-            whereConditions.push('stock > 0');
+            where.push("stock > 0");
         }
 
-        const whereClause = whereConditions.length > 0
-            ? `WHERE ${whereConditions.join(' AND ')}`
-            : '';
+        const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-        // Requête de comptage
-        const countResult = await this.dbClient.query(
-            `SELECT COUNT(*) as total FROM products ${whereClause}`,
+        const [{ total }] = await this.dbClient.query(
+            `SELECT COUNT(*) AS total FROM products ${whereClause}`,
             params
         );
 
-        // Requête des données
+        if (total === 0) {
+            return {
+                products: [],
+                total: 0,
+                pagination: { perPage: limit, page, maxPage: 0, hasNext: false }
+            };
+        }
+
+        const maxPage = Math.ceil(total / limit);
+        const offset = (page - 1) * limit;
+
         const products = await this.dbClient.query(
-            `SELECT id, name, description, price, stock, created_at, updated_at 
-                 FROM products ${whereClause} 
-                 ORDER BY created_at DESC 
-                 LIMIT ? OFFSET ?`,
+            `SELECT id, name, description, price, stock, created_at, updated_at
+            FROM products ${whereClause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?`,
             [...params, limit, offset]
         );
 
         return {
             products,
-            total: countResult[0].total,
+            total,
             pagination: {
-                limit,
-                offset,
-                hasNext: (offset + limit) < countResult[0].total
+                perPage: limit,
+                page,
+                maxPage,
+                hasNext: page < maxPage
             }
         };
     }
+
 
     /**
      * Compte le nombre total de produits
