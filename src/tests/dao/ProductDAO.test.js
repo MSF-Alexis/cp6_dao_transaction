@@ -1,5 +1,5 @@
 import DBClient from "#src/tests/mocks/DBClient.mock.js";
-import { ProductDAO } from "#src/core/data/ProductDao.js";
+import { ProductDAO } from "#src/core/data/ProductDAO.js";
 import { validProduct, invalidProducts, mockProducts } from "#src/tests/fixtures/ProductData.js";
 
 describe("[Product - DAO]", () => {

@@ -1,10 +1,18 @@
-import { pool } from "#config/database.js";
+import DatabaseClientInterface from "#src/core/database/DatabaseClientInterface.js";
 
 /**
  * DAO pour la gestion des commandes et de leurs lignes
  * Conformité RNCP 37674 – BC02.2 : accès transactionnel, intégrité, gestion des conflits
  */
 class OrderDAO {
+    /**
+     * 
+     * @param {DatabaseClientInterface} dbClient 
+     */
+    constructor(dbClient) {
+        this.dbClient = dbClient;
+    }
+
     /**
      * Valide la structure d'une commande
      * @param {Object} order - {customerName: string, items: [{productId: number, quantity: number}]}
@@ -41,85 +49,107 @@ class OrderDAO {
     async create(order) {
         this.validateOrder(order);
 
-        let conn;
         try {
-            conn = await pool.getConnection();
-            await conn.beginTransaction();
-
-            // Étape 1: Vérifier et verrouiller chaque produit
-            for (const item of order.items) {
-                const products = await conn.query(
-                    "SELECT id, name, stock FROM products WHERE id = ? FOR UPDATE",
-                    [item.productId]
-                );
-                
-                if (products.length === 0) {
-                    throw new Error(`Produit ${item.productId} introuvable`);
+            return await this.dbClient.transaction(async (clientConnection) => {
+                // Étape 1: Vérifier et verrouiller chaque produit
+                for (const item of order.items) {
+                    const products = await clientConnection.query(
+                        "SELECT id, name, stock FROM products WHERE id = ? FOR UPDATE",
+                        [item.productId]
+                    );
+                    
+                    if (products.length === 0) {
+                        throw new Error(`Produit ${item.productId} introuvable`);
+                    }
+                    
+                    const product = products[0];
+                    if (product.stock < item.quantity) {
+                        throw new Error(`Stock insuffisant pour ${product.name} (disponible: ${product.stock}, demandé: ${item.quantity})`);
+                    }
                 }
-                
-                const product = products[0];
-                if (product.stock < item.quantity) {
-                    throw new Error(`Stock insuffisant pour ${product.name} (disponible: ${product.stock}, demandé: ${item.quantity})`);
+
+                // Étape 2: Créer la commande
+                const orderResult = await clientConnection.query(
+                    "INSERT INTO orders (customer_name, status, created_at, updated_at) VALUES (?, 'pending', NOW(), NOW())",
+                    [order.customerName]
+                );
+                const orderId = orderResult.insertId;
+
+                // Étape 3: Créer les lignes de commande et décrémenter le stock
+                for (const item of order.items) {
+                    // Insérer la ligne de commande
+                    await clientConnection.query(
+                        "INSERT INTO order_items (order_id, product_id, quantity) VALUES (?, ?, ?)",
+                        [orderId, item.productId, item.quantity]
+                    );
+                    
+                    // Décrémenter le stock
+                    await clientConnection.query(
+                        "UPDATE products SET stock = stock - ?, updated_at = NOW() WHERE id = ?",
+                        [item.quantity, item.productId]
+                    );
                 }
-            }
 
-            // Étape 2: Créer la commande
-            const orderResult = await conn.query(
-                "INSERT INTO orders (customer_name, status, created_at, updated_at) VALUES (?, 'pending', NOW(), NOW())",
-                [order.customerName]
-            );
-            const orderId = orderResult.insertId;
-
-            // Étape 3: Créer les lignes de commande et décrémenter le stock
-            for (const item of order.items) {
-                // Insérer la ligne de commande
-                await conn.query(
-                    "INSERT INTO order_items (order_id, product_id, quantity) VALUES (?, ?, ?)",
-                    [orderId, item.productId, item.quantity]
-                );
-                
-                // Décrémenter le stock
-                await conn.query(
-                    "UPDATE products SET stock = stock - ?, updated_at = NOW() WHERE id = ?",
-                    [item.quantity, item.productId]
-                );
-            }
-
-            await conn.commit();
-            return orderId;
-        } catch (err) {
-            if (conn) await conn.rollback();
-            throw err;
-        } finally {
-            if (conn) conn.release();
+                return orderId;
+            });
+        } catch (error) {
+            throw error;
         }
     }
 
     /**
      * Récupère toutes les commandes avec pagination
-     * @param {number} limit - Nombre de commandes par page
-     * @param {number} offset - Décalage pour la pagination
-     * @returns {Promise<Array>} Liste des commandes
+     * @param {number} limit - Nombre de commandes par page (défaut : 50, min : 1, max : 200)
+     * @param {number} page - Page courante (défaut : 1, min : 1)
+     * @returns {Promise<{orders: Array, pagination: {perPage:number, page:number, maxPage:number, total:number}}>}
      */
-    async findAll(limit = 50, offset = 0) {
-        let conn;
+    async findAll(limit = 50, page = 1) {
+        // Validation des paramètres
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+            throw new Error('Le paramètre limit doit être un entier compris entre 1 et 200');
+        }
+        if (!Number.isInteger(page) || page < 1) {
+            throw new Error('Le paramètre page doit être un entier positif');
+        }
+
+        const offset = (page - 1) * limit;
+
         try {
-            conn = await pool.getConnection();
-            
-            const orders = await conn.query(
+            // Total d'enregistrements
+            const [{ total }] = await this.dbClient.query(
+                'SELECT COUNT(*) AS total FROM orders'
+            );
+
+            if (total === 0) {
+                return {
+                    orders: [],
+                    pagination: { perPage: limit, page, maxPage: 0, total: 0 }
+                };
+            }
+
+            // Récupération de la page demandée
+            const orders = await this.dbClient.query(
                 `SELECT id, customer_name, status, created_at, updated_at 
                  FROM orders 
                  ORDER BY created_at DESC 
                  LIMIT ? OFFSET ?`,
                 [limit, offset]
             );
-            
-            return orders;
+
+            const maxPage = Math.ceil(total / limit);
+
+            return {
+                orders,
+                pagination: {
+                    perPage: limit,
+                    page,
+                    maxPage,
+                    total
+                }
+            };
         } catch (error) {
             console.error("Erreur lors de la récupération des commandes:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 
@@ -133,12 +163,9 @@ class OrderDAO {
             throw new Error("L'ID doit être un entier positif");
         }
 
-        let conn;
         try {
-            conn = await pool.getConnection();
-
             // Récupérer la commande
-            const orders = await conn.query(
+            const orders = await this.dbClient.query(
                 "SELECT id, customer_name, status, created_at, updated_at FROM orders WHERE id = ?",
                 [id]
             );
@@ -147,7 +174,7 @@ class OrderDAO {
             const order = orders[0];
 
             // Récupérer les items de la commande
-            const items = await conn.query(
+            const items = await this.dbClient.query(
                 `SELECT oi.product_id, p.name, p.price, oi.quantity,
                         (p.price * oi.quantity) as total_price
                  FROM order_items oi
@@ -160,8 +187,6 @@ class OrderDAO {
         } catch (error) {
             console.error("Erreur lors de la récupération de la commande:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 
@@ -178,23 +203,17 @@ class OrderDAO {
             throw new Error(`Statut invalide. Autorisés: ${allowedStatuses.join(", ")}`);
         }
 
-        let conn;
         try {
-            conn = await pool.getConnection();
-            await conn.beginTransaction();
+            const updateResult = await this.dbClient.transaction(async (clientConnection) => {
+                return await clientConnection.query(
+                    "UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?",
+                    [status, id]
+                );
+            });
 
-            const result = await conn.query(
-                "UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?",
-                [status, id]
-            );
-
-            await conn.commit();
-            return result.affectedRows > 0;
-        } catch (err) {
-            if (conn) await conn.rollback();
-            throw err;
-        } finally {
-            if (conn) conn.release();
+            return updateResult.result.affectedRows > 0;
+        } catch (error) {
+            throw error;
         }
     }
 
@@ -208,74 +227,87 @@ class OrderDAO {
             throw new Error("L'ID doit être un entier positif");
         }
 
-        let conn;
         try {
-            conn = await pool.getConnection();
-            await conn.beginTransaction();
-
-            // Vérifier que la commande peut être supprimée
-            const orders = await conn.query(
-                "SELECT status FROM orders WHERE id = ?",
-                [id]
-            );
-
-            if (orders.length === 0) {
-                throw new Error("Commande introuvable");
-            }
-
-            if (orders[0].status !== "pending") {
-                throw new Error("Seules les commandes en attente peuvent être supprimées");
-            }
-
-            // Récupérer les items pour recréditer le stock
-            const items = await conn.query(
-                "SELECT product_id, quantity FROM order_items WHERE order_id = ?",
-                [id]
-            );
-
-            // Supprimer les items
-            await conn.query("DELETE FROM order_items WHERE order_id = ?", [id]);
-
-            // Supprimer la commande
-            const result = await conn.query("DELETE FROM orders WHERE id = ?", [id]);
-
-            // Recréditer le stock
-            for (const item of items) {
-                await conn.query(
-                    "UPDATE products SET stock = stock + ?, updated_at = NOW() WHERE id = ?",
-                    [item.quantity, item.product_id]
+            return await this.dbClient.transaction(async (clientConnection) => {
+                // Vérifier que la commande peut être supprimée
+                const orders = await clientConnection.query(
+                    "SELECT status FROM orders WHERE id = ?",
+                    [id]
                 );
-            }
 
-            await conn.commit();
-            return result.affectedRows > 0;
-        } catch (err) {
-            if (conn) await conn.rollback();
-            throw err;
-        } finally {
-            if (conn) conn.release();
+                if (orders.length === 0) {
+                    throw new Error("Commande introuvable");
+                }
+
+                if (orders[0].status !== "pending") {
+                    throw new Error("Seules les commandes en attente peuvent être supprimées");
+                }
+
+                // Récupérer les items pour recréditer le stock
+                const items = await clientConnection.query(
+                    "SELECT product_id, quantity FROM order_items WHERE order_id = ?",
+                    [id]
+                );
+
+                // Supprimer les items
+                await clientConnection.query("DELETE FROM order_items WHERE order_id = ?", [id]);
+
+                // Supprimer la commande
+                const result = await clientConnection.query("DELETE FROM orders WHERE id = ?", [id]);
+
+                // Recréditer le stock
+                for (const item of items) {
+                    await clientConnection.query(
+                        "UPDATE products SET stock = stock + ?, updated_at = NOW() WHERE id = ?",
+                        [item.quantity, item.product_id]
+                    );
+                }
+
+                return result.affectedRows > 0;
+            });
+        } catch (error) {
+            throw error;
         }
     }
 
     /**
      * Recherche des commandes par statut
      * @param {string} status - Statut recherché
-     * @param {number} limit - Limite de résultats
-     * @param {number} offset - Décalage pagination
-     * @returns {Promise<Array>} Liste des commandes
+     * @param {number} limit - Limite de résultats (défaut : 50, min : 1, max : 200)
+     * @param {number} page - Page courante (défaut : 1, min : 1)
+     * @returns {Promise<{orders: Array, pagination: {perPage:number, page:number, maxPage:number, total:number}}>}
      */
-    async findByStatus(status, limit = 50, offset = 0) {
+    async findByStatus(status, limit = 50, page = 1) {
         const allowedStatuses = ["pending", "processing", "completed", "cancelled"];
         
         if (!allowedStatuses.includes(status)) {
             throw new Error(`Statut invalide. Autorisés: ${allowedStatuses.join(", ")}`);
         }
 
-        let conn;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+            throw new Error('Le paramètre limit doit être un entier compris entre 1 et 200');
+        }
+        if (!Number.isInteger(page) || page < 1) {
+            throw new Error('Le paramètre page doit être un entier positif');
+        }
+
+        const offset = (page - 1) * limit;
+
         try {
-            conn = await pool.getConnection();
-            
-            const orders = await conn.query(
+            // Total d'enregistrements
+            const [{ total }] = await this.dbClient.query(
+                'SELECT COUNT(*) AS total FROM orders WHERE status = ?',
+                [status]
+            );
+
+            if (total === 0) {
+                return {
+                    orders: [],
+                    pagination: { perPage: limit, page, maxPage: 0, total: 0 }
+                };
+            }
+
+            const orders = await this.dbClient.query(
                 `SELECT id, customer_name, status, created_at, updated_at
                  FROM orders 
                  WHERE status = ?
@@ -283,33 +315,60 @@ class OrderDAO {
                  LIMIT ? OFFSET ?`,
                 [status, limit, offset]
             );
+
+            const maxPage = Math.ceil(total / limit);
             
-            return orders;
+            return {
+                orders,
+                pagination: {
+                    perPage: limit,
+                    page,
+                    maxPage,
+                    total
+                }
+            };
         } catch (error) {
             console.error("Erreur lors de la recherche par statut:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 
     /**
      * Recherche des commandes d'un client
      * @param {string} customerName - Nom du client
-     * @param {number} limit - Limite de résultats
-     * @param {number} offset - Décalage pagination
-     * @returns {Promise<Array>} Liste des commandes
+     * @param {number} limit - Limite de résultats (défaut : 50, min : 1, max : 200)
+     * @param {number} page - Page courante (défaut : 1, min : 1)
+     * @returns {Promise<{orders: Array, pagination: {perPage:number, page:number, maxPage:number, total:number}}>}
      */
-    async findByCustomer(customerName, limit = 50, offset = 0) {
+    async findByCustomer(customerName, limit = 50, page = 1) {
         if (!customerName || typeof customerName !== "string") {
             throw new Error("Le nom client est requis");
         }
 
-        let conn;
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+            throw new Error('Le paramètre limit doit être un entier compris entre 1 et 200');
+        }
+        if (!Number.isInteger(page) || page < 1) {
+            throw new Error('Le paramètre page doit être un entier positif');
+        }
+
+        const offset = (page - 1) * limit;
+
         try {
-            conn = await pool.getConnection();
-            
-            const orders = await conn.query(
+            // Total d'enregistrements
+            const [{ total }] = await this.dbClient.query(
+                'SELECT COUNT(*) AS total FROM orders WHERE customer_name LIKE ?',
+                [`%${customerName}%`]
+            );
+
+            if (total === 0) {
+                return {
+                    orders: [],
+                    pagination: { perPage: limit, page, maxPage: 0, total: 0 }
+                };
+            }
+
+            const orders = await this.dbClient.query(
                 `SELECT id, customer_name, status, created_at, updated_at
                  FROM orders 
                  WHERE customer_name LIKE ?
@@ -317,13 +376,21 @@ class OrderDAO {
                  LIMIT ? OFFSET ?`,
                 [`%${customerName}%`, limit, offset]
             );
+
+            const maxPage = Math.ceil(total / limit);
             
-            return orders;
+            return {
+                orders,
+                pagination: {
+                    perPage: limit,
+                    page,
+                    maxPage,
+                    total
+                }
+            };
         } catch (error) {
             console.error("Erreur lors de la recherche par client:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 
@@ -337,11 +404,8 @@ class OrderDAO {
             throw new Error("L'ID doit être un entier positif");
         }
 
-        let conn;
         try {
-            conn = await pool.getConnection();
-            
-            const result = await conn.query(
+            const result = await this.dbClient.query(
                 `SELECT SUM(p.price * oi.quantity) as total
                  FROM order_items oi
                  JOIN products p ON p.id = oi.product_id
@@ -353,8 +417,6 @@ class OrderDAO {
         } catch (error) {
             console.error("Erreur lors du calcul du total:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 
@@ -363,32 +425,31 @@ class OrderDAO {
      * @returns {Promise<number>} Nombre total
      */
     async count() {
-        let conn;
         try {
-            conn = await pool.getConnection();
-            
-            const result = await conn.query("SELECT COUNT(*) as count FROM orders");
-            return result[0].count;
+            const result = await this.dbClient.query("SELECT COUNT(*) as count FROM orders");
+            return result[0]?.count || 0;
         } catch (error) {
             console.error("Erreur lors du comptage:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 
     /**
      * Recherche avancée avec filtres multiples
      * @param {Object} filters - Filtres de recherche
-     * @param {number} limit - Limite de résultats
-     * @param {number} offset - Décalage pagination
-     * @returns {Promise<{orders: Array, total: number}>} Résultats paginés
+     * @param {number} limit - Limite de résultats (défaut : 20, min : 1, max : 200)
+     * @param {number} page - Page courante (défaut : 1, min : 1)
+     * @returns {Promise<{orders: Array, total: number, pagination: Object}>} Résultats paginés
      */
-    async search(filters = {}, limit = 20, offset = 0) {
-        let conn;
-        try {
-            conn = await pool.getConnection();
+    async search(filters = {}, limit = 20, page = 1) {
+        if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+            throw new Error("Le paramètre limit doit être un entier entre 1 et 200");
+        }
+        if (!Number.isInteger(page) || page < 1) {
+            throw new Error("Le paramètre page doit être un entier positif");
+        }
 
+        try {
             let whereConditions = [];
             let params = [];
 
@@ -417,13 +478,24 @@ class OrderDAO {
                 : "";
 
             // Requête de comptage
-            const countResult = await conn.query(
+            const [{ total }] = await this.dbClient.query(
                 `SELECT COUNT(*) as total FROM orders ${whereClause}`,
                 params
             );
 
+            if (total === 0) {
+                return {
+                    orders: [],
+                    total: 0,
+                    pagination: { perPage: limit, page, maxPage: 0, hasNext: false }
+                };
+            }
+
+            const maxPage = Math.ceil(total / limit);
+            const offset = (page - 1) * limit;
+
             // Requête des données
-            const orders = await conn.query(
+            const orders = await this.dbClient.query(
                 `SELECT id, customer_name, status, created_at, updated_at
                  FROM orders ${whereClause}
                  ORDER BY created_at DESC
@@ -433,18 +505,17 @@ class OrderDAO {
 
             return {
                 orders,
-                total: countResult[0].total,
+                total,
                 pagination: {
-                    limit,
-                    offset,
-                    hasNext: (offset + limit) < countResult[0].total
+                    perPage: limit,
+                    page,
+                    maxPage,
+                    hasNext: page < maxPage
                 }
             };
         } catch (error) {
             console.error("Erreur lors de la recherche:", error);
             throw error;
-        } finally {
-            if (conn) conn.release();
         }
     }
 }
