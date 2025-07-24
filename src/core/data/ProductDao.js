@@ -118,16 +118,17 @@ class ProductDAO {
      * @returns {Promise<Object|null>} - Produit trouvé ou null
      */
     async findById(id) {
-        if (!Number.isInteger(id) || id <= 0) {
+        if (!(Number.isInteger(id) && id > 0)) {
             throw new Error('L\'ID doit être un entier positif');
         }
 
-        return await this.dbClient.query(
+        const result = await this.dbClient.query(
             `SELECT id, name, description, price, stock, created_at, updated_at 
                     FROM products 
                     WHERE id = ?`,
             [id]
-        )[0] || null;
+        );
+        return result[0] || null
     }
 
     /**
@@ -140,12 +141,14 @@ class ProductDAO {
             throw new Error('L\'ID doit être un entier positif');
         }
 
-        return await this.dbClient.query(
+        const result = await this.dbClient.query(
             `SELECT id, name, description, price, stock, created_at, updated_at 
                  FROM products 
                  WHERE id = ? FOR UPDATE`,
             [id]
-        )[0] || null;
+        );
+
+        return result[0] || null
     }
 
     /**
@@ -169,14 +172,15 @@ class ProductDAO {
             throw new Error(`Produit avec l'ID ${id} non trouvé`);
         }
 
-        return await this.dbClient.transaction(async (clientConnection) => {
+        const updateResult =  await this.dbClient.transaction(async (clientConnection) => {
             return await clientConnection.query(
                 `UPDATE products 
                  SET name = ?, description = ?, price = ?, stock = ?, updated_at = NOW() 
                  WHERE id = ?`,
                 [productData.name, productData.description, productData.price, productData.stock, id]
             )
-        })?.result.affectedRows > 0;
+        });
+        return updateResult.result.affectedRows > 0
     }
 
     /**
@@ -207,14 +211,16 @@ class ProductDAO {
             throw new Error(`Stock insuffisant. Disponible: ${product[0].stock}, Demandé: ${quantity}`);
         }
 
-        return await this.dbClient.transaction(async (clientConnection) => {
+        const updateResult = await this.dbClient.transaction(async (clientConnection) => {
             return await clientConnection.query(
                 `UPDATE products 
                  SET stock = stock - ?, updated_at = NOW() 
                  WHERE id = ?`,
                 [quantity, id]
             );
-        })?.result.affectedRows > 0;
+        });
+
+        return updateResult.result.affectedRows > 0
     }
 
     /**
@@ -241,12 +247,14 @@ class ProductDAO {
             throw new Error('Impossible de supprimer un produit ayant des commandes en cours');
         }
 
-        return await this.dbClient.transaction(async (clientConnection) => {
+        const deleteResult = await this.dbClient.transaction(async (clientConnection) => {
             return await clientConnection.query(
                 'DELETE FROM products WHERE id = ?',
                 [id]
             );
-        })?.result.affectedRows > 0;
+        });
+
+        return deleteResult.result.affectedRows > 0;
 
 
     }
@@ -330,7 +338,8 @@ class ProductDAO {
      * @returns {Promise<number>} - Nombre total de produits
      */
     async count() {
-        return await this.dbClient.query('SELECT COUNT(*) as count FROM products')[0]?.count;
+        const result = await this.dbClient.query('SELECT COUNT(*) as count FROM products');
+        return result[0]?.count;
     }
 
     /**
