@@ -5,6 +5,10 @@ export default class DBClient extends DatabaseClientInterface {
     super();
     this.queries = [];
     this.shouldFail = false;
+    this.rollback = jest.fn();
+    this.release = jest.fn();
+    this.commit = jest.fn();
+    this.beginTransaction = jest.fn();
   }
 
   failNext() { this.shouldFail = true; }
@@ -17,6 +21,16 @@ export default class DBClient extends DatabaseClientInterface {
   }
 
   async transaction(work) {
-    return work(this); // pas de vraie transaction, mais l’API reste identique
+    try {
+      this.beginTransaction();
+      const result = await work(this);
+      this.commit();
+      return result; 
+    } catch (error) {
+      this.rollback();
+      throw error;
+    } finally {
+      this.release();
+    }
   }
 }
