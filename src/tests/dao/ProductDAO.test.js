@@ -10,16 +10,26 @@ describe("[Product - DAO]", () => {
         productDAO = new ProductDAO(dbClient);
     });
 
-    /* ------------------------------------------------------------------ */
-    /* validateProduct() – Phase 1 : Tests SIMPLES                        */
-    /* ------------------------------------------------------------------ */
-    describe("validateProduct()", () => {
-        test("Test 1 - Accepte un produit valide", () => {
-            expect(() => productDAO.validateProduct(validProduct)).not.toThrow();
-        });
+    describe("Phase 1 : tests SIMPLES", function () {
+        describe("validateProduct()", function () {
+            test("Test 1 - Accepte un produit valide", () => {
+                expect(() => productDAO.validateProduct(validProduct)).not.toThrow();
+            });
 
-        /* -------- Validation des valeurs (Tests 2→5) -------- */
-        describe("Test 2→5 - Rejette un produit invalide (valeurs hors plage)", () => {
+            test("Test 2 - Rejette un produit avec un nom trop court", () => {
+                expect(() =>
+                    productDAO.validateProduct(invalidProducts.shortName)
+                ).toThrow("Le champ name doit contenir au moins 5 caractères");
+            });
+
+            test("Test 3 - Rejette un produit avec une description trop courte", () => {
+                expect(() =>
+                    productDAO.validateProduct(invalidProducts.shortDescription)
+                ).toThrow(
+                    "Le champ description doit contenir au moins 10 caractères"
+                );
+            });
+
             test("Test 4 - Rejette un produit avec un prix invalide", () => {
                 expect(() =>
                     productDAO.validateProduct(invalidProducts.invalidPrice)
@@ -31,160 +41,372 @@ describe("[Product - DAO]", () => {
                     productDAO.validateProduct(invalidProducts.invalidStock)
                 ).toThrow("Le champ stock doit être ≥ 0");
             });
+        });
 
-            test("Test 3 - Rejette un produit avec une description trop courte", () => {
-                expect(() =>
-                    productDAO.validateProduct(invalidProducts.shortDescription)
-                ).toThrow(
-                    "Le champ description doit contenir au moins 10 caractères"
-                );
+        describe("create()", function () {
+            test("Test 6 - Crée un produit avec succès", async () => {
+                const result = await productDAO.create(validProduct);
+                expect(result.insertId).toBe(1);
             });
 
-            test("Test 2 - Rejette un produit avec un nom trop court", () => {
-                expect(() =>
-                    productDAO.validateProduct(invalidProducts.shortName)
-                ).toThrow("Le champ name doit contenir au moins 5 caractères");
+            test("Test 7 - Rejette un produit invalide avant transaction", async () => {
+                await expect(productDAO.create(invalidProducts.shortName)).rejects.toThrow(
+                    "Le champ name doit contenir au moins 5 caractères"
+                );
+                expect(dbClient.queries).toHaveLength(0);
             });
         });
 
-        /* -------- Champs obligatoires (Test 52) -------- */
-        describe("Test 52 - Rejette un produit invalide (champs obligatoires)", () => {
-            test("Rejette un produit avec un prix null", () => {
-                const p = { ...invalidProducts.invalidPrice, price: null };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ price est obligatoire"
-                );
+        describe("findAll()", function () {
+            test('Test 8 – Retourne tous les produits avec pagination par défaut', async () => {
+                /* ========== 1. ARRANGE ========== */
+                // 1er appel : SELECT COUNT(*) → total = 3
+                // 2e appel : SELECT … LIMIT 50 OFFSET 0 → retourne mockProducts
+                dbClient.query = jest.fn()
+                    .mockResolvedValueOnce([{ total: 3 }])   // COUNT(*)
+                    .mockResolvedValueOnce(mockProducts);    // SELECT paginé
+
+                /* ========== 2. ACT ========== */
+                // findAll() sans argument → limit 50, page 1
+                const result = await productDAO.findAll();        // signature (limit = 50, offset = 0)
+
+                /* ========== 3. ASSERT ========== */
+                // a) Contenu retourné
+                expect(result).toEqual({
+                    products: mockProducts,
+                    pagination: {
+                        perPage: 50,
+                        page: 1,
+                        maxPage: 1,
+                        total: 3
+                    }
+                });
+
+                // b) Nombre d’appels SQL
+                expect(dbClient.query).toHaveBeenCalledTimes(2);
+
+                // c) Vérification du COUNT(*)
+                expect(dbClient.query.mock.calls[0][0]).toContain('COUNT(*)');
+
+                // d) Vérification du SELECT paginé (LIMIT 50 OFFSET 0)
+                expect(dbClient.query.mock.calls[1][1]).toEqual([50, 0]);
             });
 
-            test("Rejette un produit avec un stock null", () => {
-                const p = { ...invalidProducts.invalidStock, stock: null };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ stock est obligatoire"
-                );
+            test('Test 9 - Retourne un tableau vide si aucun produit', async () => {
+                dbClient.query = jest.fn()
+                    .mockResolvedValueOnce([{ total: 0 }]);
+                const result = await productDAO.findAll();
+                expect(result).toEqual({
+                    products: [],
+                    pagination: {
+                        perPage: 50, page: 1, maxPage: 0, total: 0
+                    }
+                });
+            });
+        });
+
+        describe("findById()", function () {
+            /* Test 10 : Retourne un produit existant */
+            test('Test 10 – Retourne un produit existant', async () => {
+                // ARRANGE
+                dbClient.query = jest.fn().mockResolvedValueOnce([mockProducts[0]]);
+
+                // ACT
+                const result = await productDAO.findById(1);
+
+                // ASSERT
+                expect(result).toEqual(mockProducts[0]);
+                expect(dbClient.query).toHaveBeenCalledTimes(1);
+                expect(dbClient.query.mock.calls[0][1]).toEqual([1]);
             });
 
-            test("Rejette un produit avec un nom null", () => {
-                const p = { ...invalidProducts.shortName, name: null };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ name est obligatoire"
-                );
+            /* Test 11 : Retourne null pour un ID inexistant */
+            test('Test 11 – Retourne null pour un ID inexistant', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([]);
+
+                const result = await productDAO.findById(999);
+
+                expect(result).toBeNull();
+                expect(dbClient.query).toHaveBeenCalledTimes(1);
             });
 
-            test("Rejette un produit avec une description null", () => {
-                const p = { ...invalidProducts.shortDescription, description: null };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ description est obligatoire"
+            /* Test 12 : Rejette un ID invalide */
+            test.each([0, -5, 'abc'])(
+                'Test 12 – Rejette un ID invalide (%p)',
+                async invalidId => {
+                    dbClient.query = jest.fn();
+                    await expect(productDAO.findById(invalidId)).rejects.toThrow(
+                        "L'ID doit être un entier positif"
+                    );
+                    expect(dbClient.query).not.toHaveBeenCalled();
+                }
+            );
+        });
+
+        describe("findByIdForUpdate()", function () {
+            /* Test 13 : Retourne un produit avec verrouillage FOR UPDATE */
+            test('Test 13 – Retourne un produit avec verrouillage FOR UPDATE', async () => {
+                const row = mockProducts[1];
+                dbClient.query = jest.fn().mockResolvedValueOnce([row]);
+
+                const result = await productDAO.findByIdForUpdate(2);
+
+                expect(result).toEqual(row);
+                expect(dbClient.query.mock.calls[0][0]).toContain('FOR UPDATE');
+            });
+
+            /* Test 14 : Retourne null pour un ID inexistant */
+            test('Test 14 – Retourne null pour un ID inexistant', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([]);
+
+                const result = await productDAO.findByIdForUpdate(888);
+
+                expect(result).toBeNull();
+            });
+        });
+
+        describe("update()", function () {
+            /* Test 15 : Met à jour un produit existant avec des données valides */
+            test('Test 15 – Met à jour un produit existant avec données valides', async () => {
+                /* 1ᵉʳ query : vérifie existence  |  2ᵉ : UPDATE */
+                dbClient.query = jest
+                    .fn()
+                    .mockResolvedValueOnce([{ id: 1 }])             // existence ok
+                    .mockResolvedValueOnce({ result: { affectedRows: 1 } }); // update ok
+
+                const ok = await productDAO.update(1, validProduct);
+
+                expect(ok).toBe(true);
+                expect(dbClient.query).toHaveBeenCalledTimes(2);
+            });
+
+            /* Test 16 : Retourne false / exception pour un ID inexistant */
+            test('Test 16 – Retourne false pour un ID inexistant', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([]); // pas trouvé
+
+                await expect(productDAO.update(999, validProduct)).rejects.toThrow(
+                    "Produit avec l'ID 999 non trouvé"
                 );
             });
         });
 
-        /* -------- Types incorrects (Tests 53 & 54) -------- */
-        describe("Tests 53-54 - Rejette un produit invalide (types incorrects)", () => {
-            test("Test 53 - Rejette un produit avec un prix de mauvais type", () => {
-                const p = { ...invalidProducts.invalidPrice, price: true };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ price doit être de type number"
-                );
+        describe("updateStock()", function () {
+            /* Test 17 : Décrémente le stock quand suffisant */
+            test('Test 17 – Décrémente le stock quand suffisant', async () => {
+                dbClient.query = jest
+                    .fn()
+                    .mockResolvedValueOnce([{ stock: 10 }])                // SELECT … FOR UPDATE
+                    .mockResolvedValueOnce({ result: { affectedRows: 1 } });// UPDATE
+
+                const ok = await productDAO.updateStock(1, 5);
+
+                expect(ok).toBe(true);
             });
 
-            test("Test 54 - Rejette un produit avec un stock non entier", () => {
+            /* Test 18 : Rejette si stock insuffisant */
+            test('Test 18 – Rejette si stock insuffisant', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([{ stock: 2 }]);
+
+                await expect(productDAO.updateStock(1, 5)).rejects.toThrow(
+                    /Stock insuffisant/
+                );
+            });
+        });
+
+        describe('delete()', () => {
+            /* Test 19 : Supprime un produit sans commandes liées */
+            test('Test 19 – Supprime un produit sans commandes liées', async () => {
+                dbClient.query = jest
+                    .fn()
+                    .mockResolvedValueOnce([{ count: 0 }])               // aucune commande
+                    .mockResolvedValueOnce({ result: { affectedRows: 1 } }); // DELETE
+
+                const ok = await productDAO.delete(3);
+                expect(ok).toBe(true);
+            });
+
+            /* Test 20 : Retourne false pour un ID inexistant */
+            test('Test 20 – Retourne false pour un ID inexistant', async () => {
+                dbClient.query = jest
+                    .fn()
+                    .mockResolvedValueOnce([{ count: 0 }])               // 0 commandes
+                    .mockResolvedValueOnce({ result: { affectedRows: 0 } });// DELETE rien
+
+                const ok = await productDAO.delete(999);
+                expect(ok).toBe(false);
+            });
+        });
+
+        describe('search()', () => {
+            /* Test 21 : Recherche par nom avec résultats */
+            test('Test 21 – Recherche par nom avec résultats', async () => {
+                dbClient.query = jest
+                    .fn()
+                    .mockResolvedValueOnce([{ total: 1 }])   // COUNT
+                    .mockResolvedValueOnce([mockProducts[0]]); // SELECT
+
+                const result = await productDAO.search({ name: 'Burger' });
+
+                expect(result.products).toHaveLength(1);
+                expect(result.total).toBe(1);
+                expect(dbClient.query.mock.calls[0][0]).toContain('WHERE name LIKE');
+            });
+
+            /* Test 22 : Retourne résultat vide si aucun match */
+            test('Test 22 – Retourne résultat vide si aucun match', async () => {
+                dbClient.query = jest
+                    .fn()
+                    .mockResolvedValueOnce([{ total: 0 }])   // COUNT
+                    .mockResolvedValueOnce([]);              // SELECT vide
+
+                const result = await productDAO.search({ name: 'Inexistant' });
+
+                expect(result.products).toEqual([]);
+                expect(result.total).toBe(0);
+            });
+        });
+
+        describe('checkStock()', () => {
+            /* Test 23 : Retourne true si stock suffisant */
+            test('Test 23 – Retourne true si stock suffisant', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([{ ...mockProducts[0], stock: 10 }]);
+
+                const ok = await productDAO.checkStock(1, 5);
+                expect(ok).toBe(true);
+            });
+
+            /* Test 24 : Retourne false si stock insuffisant */
+            test('Test 24 – Retourne false si stock insuffisant', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([{ ...mockProducts[0], stock: 2 }]);
+
+                const ok = await productDAO.checkStock(1, 5);
+                expect(ok).toBe(false);
+            });
+        });
+
+        describe('count()', () => {
+            /* Test 25 : Retourne le nombre total de produits */
+            test('Test 25 – Retourne le nombre total de produits', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([{ count: 42 }]);
+
+                const total = await productDAO.count();
+                expect(total).toBe(42);
+            });
+
+            /* Test 26 : Retourne 0 si aucun produit */
+            test('Test 26 – Retourne 0 si aucun produit', async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce([{ count: 0 }]);
+
+                const total = await productDAO.count();
+                expect(total).toBe(0);
+            });
+        });
+    });
+
+    describe("Phase 2 : tests MOYENS", function () {
+
+        describe("validateProduct()", function () {
+            describe("Test 27 - Rejette un produit invalide (champs obligatoires)", () => {
+                test("Test 27.1 - Rejette un produit avec un prix null", () => {
+                    const p = { ...invalidProducts.invalidPrice, price: null };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ price est obligatoire"
+                    );
+                });
+
+                test("Test 27.2 -Rejette un produit avec un stock null", () => {
+                    const p = { ...invalidProducts.invalidStock, stock: null };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ stock est obligatoire"
+                    );
+                });
+
+                test("Test 27.3 - Rejette un produit avec un nom null", () => {
+                    const p = { ...invalidProducts.shortName, name: null };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ name est obligatoire"
+                    );
+                });
+
+                test("Test 27.4 - Rejette un produit avec une description null", () => {
+                    const p = { ...invalidProducts.shortDescription, description: null };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ description est obligatoire"
+                    );
+                });
+            });
+
+            describe("Tests 28 - Rejette un produit invalide (types incorrects)", () => {
+                test("Test 28.1 - Rejette un produit avec un prix de mauvais type", () => {
+                    const p = { ...invalidProducts.invalidPrice, price: true };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ price doit être de type number"
+                    );
+                });
+
+
+                test("Test 28.2 - Rejette un produit avec un nom de mauvais type", () => {
+                    const p = { ...invalidProducts.shortName, name: 123 };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ name doit être de type string"
+                    );
+                });
+
+                test("Test 28.3 - Rejette un produit avec une description de mauvais type", () => {
+                    const p = { ...invalidProducts.shortDescription, description: false };
+                    expect(() => productDAO.validateProduct(p)).toThrow(
+                        "Le champ description doit être de type string"
+                    );
+                });
+
+            });
+
+            test("Test 29 - Rejette un produit avec un stock non entier", () => {
                 const p = { ...invalidProducts.invalidStock, stock: 125.2 };
                 expect(() => productDAO.validateProduct(p)).toThrow(
                     "Le champ stock doit être un entier"
                 );
             });
+        });
 
-            test("Test 53 - Rejette un produit avec un nom de mauvais type", () => {
-                const p = { ...invalidProducts.shortName, name: 123 };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ name doit être de type string"
+        describe("create()", () => {
+
+            test("Test 30 - Effectue rollback en cas d'erreur de base de données", async () => {
+                dbClient.failNext();
+                await expect(productDAO.create(validProduct)).rejects.toThrow(
+                    "DB error simulated"
                 );
             });
 
-            test("Test 53 - Rejette un produit avec une description de mauvais type", () => {
-                const p = { ...invalidProducts.shortDescription, description: false };
-                expect(() => productDAO.validateProduct(p)).toThrow(
-                    "Le champ description doit être de type string"
-                );
-            });
-        });
-    });
-
-    /* ------------------------------------------------------------------ */
-    /* create() – Phase 1 & 2                                             */
-    /* ------------------------------------------------------------------ */
-    describe("create()", () => {
-        test("Test 6 - Crée un produit avec succès", async () => {
-            const result = await productDAO.create(validProduct);
-            expect(result.insertId).toBe(1);
-        });
-
-        test("Test 55 - Effectue rollback en cas d'erreur de base de données", async () => {
-            dbClient.failNext();
-            await expect(productDAO.create(validProduct)).rejects.toThrow(
-                "DB error simulated"
-            );
-        });
-
-        test("Test 7 - Rejette un produit invalide avant transaction", async () => {
-            await expect(productDAO.create(invalidProducts.shortName)).rejects.toThrow(
-                "Le champ name doit contenir au moins 5 caractères"
-            );
-            expect(dbClient.queries).toHaveLength(0);
-        });
-    });
-
-    /* ------------------------------------------------------------------ */
-    /*  Les autres blocs (findAll, findById, etc.) sont encore À FAIRE    */
-    /* ------------------------------------------------------------------ */
-
-    describe("findAll()", function () {
-        // Test 8 – Retourne tous les produits avec pagination par défaut
-        test('Test 8 – Retourne tous les produits avec pagination par défaut', async () => {
-            // 1. ARRANGE
-            // On "mock" la méthode query du dbClient pour simuler deux accès BDD :
-            // - Premier appel de query (pour le total) : la BDD "compte" 3 produits.
-            // - Second appel de query (pour les données paginées) : la BDD retourne le tableau mockProducts
-            dbClient.query = jest.fn()
-                .mockResolvedValueOnce([{ total: 3 }])    // Simule : SELECT COUNT(*) FROM products
-                .mockResolvedValueOnce(mockProducts);     // Simule : SELECT ... LIMIT ... OFFSET ...
-
-            // 2. ACT
-            // On exécute la méthode search(), sans critère, donc sur la page 1 (pagination par défaut)
-            const result = await productDAO.search();
-
-            // 3. ASSERTS
-            // Vérifie que le "résultat" contient bien :
-            // - le tableau mockProducts comme propriété products
-            // - le total d'éléments égal à 3
-            // - un bloc pagination complet avec valeurs par défaut (20 par page, page 1, 1 page au total, pas de page suivante)
-            expect(result).toEqual({
-                products: mockProducts,
-                total: 3,
-                pagination: { perPage: 20, page: 1, maxPage: 1, hasNext: false }
+            test("Test 31 – Gère l’échec de getConnection () du pool", async () => {
+                dbClient.transaction = jest.fn().mockRejectedValue(new Error("Connection failed"));
+                await expect(productDAO.create(validProduct)).rejects.toThrow("Connection failed");
+                expect(dbClient.transaction).toHaveBeenCalledTimes(1);
             });
 
-            // Vérifie que la méthode query a été appelée exactement 2 fois (1 pour COUNT, 1 pour SELECT)
-            expect(dbClient.query).toHaveBeenCalledTimes(2);
-
-            // Vérifie le SQL du premier appel (dénombrement total)
-            expect(dbClient.query.mock.calls[0][0]).toContain('COUNT(*)');
-
-            // Vérifie les bons paramètres SQL du second appel (limit et offset par défaut)
-            expect(dbClient.query.mock.calls[1][1]).toEqual([20, 0]);
+            test("Test 32 – Libère la connexion même en cas d’erreur (finally)", async () => {
+                const fakeConn = {
+                    beginTransaction: jest.fn(),
+                    query: jest.fn().mockRejectedValue(new Error("DB crash")),
+                    commit: jest.fn(),
+                    rollback: jest.fn(),
+                    release: jest.fn(),
+                };
+                dbClient.transaction = async work => {
+                    try {
+                        return await work(fakeConn);
+                    } catch (e) {
+                        fakeConn.rollback();
+                        throw e;
+                    } finally {
+                        fakeConn.release();
+                    }
+                };
+                await expect(productDAO.create(validProduct)).rejects.toThrow("DB crash");
+                expect(fakeConn.rollback).toHaveBeenCalled();
+                expect(fakeConn.release).toHaveBeenCalled();
+            });
         });
 
-        test('Test 9 - Retourne un tableau vide si aucun produit', async () => {
-            dbClient.query = jest.fn()
-                .mockResolvedValueOnce([{ total: 0 }]);
-            const result = await productDAO.findAll();
-            expect(result).toEqual({
-                products: [],
-                pagination: {
-                    perPage: 50, page: 1, maxPage: 0, total: 0
-                }
-            })
-        });
     });
-
 });
