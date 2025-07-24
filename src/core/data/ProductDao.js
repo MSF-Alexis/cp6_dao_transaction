@@ -93,9 +93,9 @@ class ProductDAO {
         // ------------ Récupération de la page demandée ------------
         const products = await this.dbClient.query(
             `SELECT id, name, description, price, stock, created_at, updated_at
-       FROM products
-      ORDER BY created_at DESC
-      LIMIT ? OFFSET ?`,
+            FROM products
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?`,
             [limit, offset]
         );
 

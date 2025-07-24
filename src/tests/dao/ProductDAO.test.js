@@ -406,6 +406,85 @@ describe("[Product - DAO]", () => {
                 expect(fakeConn.rollback).toHaveBeenCalled();
                 expect(fakeConn.release).toHaveBeenCalled();
             });
+
+            test("Test 33 – Rollback si violation de clé unique (name)", async () => {
+                /* 1. ARRANGE ----------------------------------------------------------- */
+                const duplicateError = Object.assign(new Error("ER_DUP_ENTRY"), {
+                    code: "ER_DUP_ENTRY",
+                });
+                // Simule l'erreur à la 1ʳᵉ requête SQL (INSERT)
+                dbClient.query = jest.fn().mockRejectedValueOnce(duplicateError);
+
+
+
+                /* 2. ACT --------------------------------------------------------------- */
+                await expect(productDAO.create(validProduct)).rejects.toThrow(/ER_DUP_ENTRY/);
+
+                /* 3. ASSERT ------------------------------------------------------------ */
+                // Vérifie que le rollback et la libération ont été exécutés
+                expect(dbClient.rollback).toHaveBeenCalledTimes(1);
+                expect(dbClient.release).toHaveBeenCalledTimes(1);
+            });
+
+            test("Test 34 – Commit explicite après `create` réussi", async () => {
+                dbClient.query = jest.fn().mockResolvedValueOnce({ insertId: 42 });
+                const result = await productDAO.create(validProduct);
+                expect(result.insertId).toBe(42);
+                expect(dbClient.beginTransaction).toHaveBeenCalledTimes(1);
+                expect(dbClient.commit).toHaveBeenCalledTimes(1);
+            });
+
+            test("Test 35 – Libère la connexion même après commit", async () => {
+                /* 1. ARRANGE ----------------------------------------------------------- */
+                dbClient.query = jest.fn().mockResolvedValueOnce({ insertId: 7 });   // INSERT OK
+                dbClient.commit.mockImplementation(() => {
+                    throw new Error("Post-commit crash");                  // panne après COMMIT
+                });
+
+                /* 2. ACT & ASSERT ------------------------------------------------------ */
+                await expect(productDAO.create(validProduct))
+                    .rejects.toThrow(/Post-commit crash/);
+
+                // Le COMMIT doit avoir été tenté une seule fois
+                expect(dbClient.commit).toHaveBeenCalledTimes(1);
+                // La connexion doit quand même être libérée
+                expect(dbClient.release).toHaveBeenCalledTimes(1);
+            });
+
+            test("Test 36 – Erreur `BEGIN` déclenche rollback automatique", async () => {
+                /* 1. ARRANGE ----------------------------------------------------------- */
+                // Simule échec dès l'ouverture de transaction
+                dbClient.beginTransaction = jest
+                    .fn()
+                    .mockImplementation(() => {
+                        throw new Error("BEGIN failed");                  // panne après COMMIT
+                    });
+
+                /* 2. ACT & ASSERT ------------------------------------------------------ */
+                await expect(productDAO.create(validProduct)).rejects.toThrow(/BEGIN failed/);
+
+                // Aucun commit ne doit survenir
+                expect(dbClient.commit).not.toHaveBeenCalled();
+                // Le rollback doit être tenté malgré l'échec du BEGIN
+                expect(dbClient.rollback).toHaveBeenCalledTimes(1);
+                expect(dbClient.release).toHaveBeenCalledTimes(1);
+            });
+
+            test("Test 37 – Timeout DB pendant `create` → rollback", async () => {
+                /* 1. ARRANGE ----------------------------------------------------------- */
+                const timeoutErr = Object.assign(new Error("Query timeout"), {
+                    code: "PROTOCOL_SEQUENCE_TIMEOUT",
+                });
+                // INSERT lève un timeout
+                dbClient.query = jest.fn().mockRejectedValueOnce(timeoutErr);
+
+                /* 2. ACT --------------------------------------------------------------- */
+                await expect(productDAO.create(validProduct)).rejects.toThrow(/timeout/);
+
+                /* 3. ASSERT ------------------------------------------------------------ */
+                expect(dbClient.rollback).toHaveBeenCalledTimes(1);
+                expect(dbClient.release).toHaveBeenCalledTimes(1);
+            });
         });
 
     });
